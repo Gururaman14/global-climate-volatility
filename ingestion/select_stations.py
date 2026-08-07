@@ -20,8 +20,7 @@ df = df.drop_duplicates(subset=["USAF", "WBAN"])
 
 df = df.dropna(subset=["USAF", "WBAN"])
 
-df["STATION_ID"] = df["USAF"] + "-" + df["WBAN"]
-
+df["STATION_ID"] = df["USAF"] + df["WBAN"]
 columns = ["STATION_ID","STATION NAME","CTRY","LAT","LON","ELEV(M)",  "BEGIN","END"]
 df = df[columns]
 OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
