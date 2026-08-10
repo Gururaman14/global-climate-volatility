@@ -1,54 +1,135 @@
-import requests
-from tqdm import tqdm
-
+import os
 import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.append(str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import METADATA_URL,METADATA_FILE
+os.environ["SPARK_LOCAL_IP"] = "127.0.0.1"
+os.environ["SPARK_LOCAL_HOSTNAME"] = "localhost"
 
-def download_file(url, destination):
-    destination.parent.mkdir(parents=True, exist_ok=True)
-
-    if destination.exists():
-        print(f"[INFO] File already exists: {destination}")
-        return
-
-    print("[INFO] Downloading station metadata...")
-
-    response = requests.get(url, stream=True, timeout=60)
-    response.raise_for_status()
-
-    total_size = int(response.headers.get("content-length", 0))
-
-    with open(destination, "wb") as file, tqdm(
-        desc=destination.name,
-        total=total_size,
-        unit="B",
-        unit_scale=True,
-        unit_divisor=1024,
-    ) as progress:
-
-        for chunk in response.iter_content(chunk_size=8192):
-            if chunk:
-                file.write(chunk)
-                progress.update(len(chunk))
-
-    print(f"[SUCCESS] Saved to {destination}")
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when
 
 
-def main():
-    try:
-        download_file(METADATA_URL, METADATA_FILE)
+spark = SparkSession.builder \
+    .appName("GlobalClimateVolatility-Cleaning") \
+    .master("local[*]") \
+    .config("spark.driver.host", "127.0.0.1") \
+    .config("spark.driver.bindAddress", "127.0.0.1") \
+    .config(
+        "spark.hadoop.fs.file.impl",
+        "org.apache.hadoop.fs.RawLocalFileSystem"
+    ) \
+    .config("spark.hadoop.fs.permissions.umask-mode", "000") \
+    .config("spark.hadoop.fs.file.impl.disable.cache", "true") \
+    .getOrCreate()
 
-    except requests.exceptions.RequestException as e:
-        print(f"[ERROR] Download failed: {e}")
 
-    except Exception as e:
-        print(f"[ERROR] {e}")
+RAW_DIR = PROJECT_ROOT / "data" / "raw" / "2024"
+PROCESSED_DIR = PROJECT_ROOT / "data" / "processed" / "2024"
+
+PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
 
-if __name__ == "__main__":
-    main()
+files = [
+    str(file)
+    for file in RAW_DIR.glob("*.csv")
+]
+
+print(f"Files found: {len(files)}")
+
+
+df = spark.read \
+    .option("header", True) \
+    .option("inferSchema", True) \
+    .csv(files)
+
+
+print(f"Raw records: {df.count()}")
+
+
+df = df.select(
+    "STATION",
+    "DATE",
+    "LATITUDE",
+    "LONGITUDE",
+    "ELEVATION",
+    "NAME",
+    "TEMP",
+    "DEWP",
+    "SLP",
+    "VISIB",
+    "WDSP",
+    "MXSPD",
+    "GUST",
+    "MAX",
+    "MIN",
+    "PRCP",
+    "SNDP",
+    "FRSHTT"
+)
+
+
+df = df.filter(
+    col("DATE").isNotNull()
+)
+
+
+df = df.filter(
+    col("TEMP").isNotNull()
+)
+
+
+df = df.withColumn(
+    "TEMP",
+    when(col("TEMP") > 999, None)
+    .otherwise(col("TEMP"))
+)
+
+df = df.withColumn(
+    "MAX",
+    when(col("MAX") > 999, None)
+    .otherwise(col("MAX"))
+)
+
+df = df.withColumn(
+    "MIN",
+    when(col("MIN") > 999, None)
+    .otherwise(col("MIN"))
+)
+
+df = df.withColumn(
+    "PRCP",
+    when(col("PRCP") > 999, None)
+    .otherwise(col("PRCP"))
+)
+
+
+df = df.dropDuplicates(
+    ["STATION", "DATE"]
+)
+
+
+print(f"Clean records: {df.count()}")
+
+
+print("\nCleaned schema:")
+df.printSchema()
+
+
+print("\nCleaned sample:")
+df.show(10, truncate=False)
+
+
+OUTPUT_PATH = str(PROCESSED_DIR)
+
+df.write \
+    .mode("overwrite") \
+    .parquet(OUTPUT_PATH)
+
+
+print(f"\nSaved cleaned data to: {OUTPUT_PATH}")
+
+
+spark.stop()
