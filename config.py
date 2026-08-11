@@ -1,7 +1,3 @@
-"""
-Project configuration
-"""
-
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -12,7 +8,9 @@ RAW_DATA_DIR = DATA_DIR / "raw"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
 
 YEAR = "2024"
-DOWNLOAD_LIMIT = 10
+
+# Number of NOAA stations to download for the DISS2 analysis
+DOWNLOAD_LIMIT = 80
 
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_FILE = LOG_DIR / "ingestion.log"

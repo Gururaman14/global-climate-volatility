@@ -1,30 +1,38 @@
-import os
-import sys
+import os,sys
 from pathlib import Path
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, count, sum, avg, max, when
+from pyspark.sql.functions import col,count,sum,avg,max,when
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-os.environ["SPARK_LOCAL_IP"] = "127.0.0.1"
-os.environ["SPARK_LOCAL_HOSTNAME"] = "localhost"
+PROJECT_ROOT=Path(__file__).resolve().parent.parent
+sys.path.insert(0,str(PROJECT_ROOT))
+os.environ["SPARK_LOCAL_IP"]="127.0.0.1"
+os.environ["SPARK_LOCAL_HOSTNAME"]="localhost"
 
-spark = (SparkSession.builder.appName("GlobalClimateVolatility-Aggregation").master("local[2]").config("spark.driver.host", "127.0.0.1").config("spark.driver.bindAddress", "127.0.0.1").getOrCreate())
+INPUT_PATH="s3a://climate-data/processed/volatility/2024/"
+OUTPUT_PATH="s3a://climate-data/processed/aggregated/2024/"
+
+spark=(SparkSession.builder.appName("GlobalClimateVolatility-Aggregation").master("local[2]")
+.config("spark.driver.host","127.0.0.1")
+.config("spark.driver.bindAddress","127.0.0.1")
+.config("spark.hadoop.fs.s3a.endpoint","http://127.0.0.1:9000")
+.config("spark.hadoop.fs.s3a.access.key","minioadmin")
+.config("spark.hadoop.fs.s3a.secret.key","minioadmin")
+.config("spark.hadoop.fs.s3a.path.style.access","true")
+.config("spark.hadoop.fs.s3a.connection.ssl.enabled","false")
+.config("spark.hadoop.fs.s3a.impl","org.apache.hadoop.fs.s3a.S3AFileSystem")
+.getOrCreate())
+
 spark.sparkContext.setLogLevel("WARN")
 
-INPUT_PATH = PROJECT_ROOT / "data" / "processed" / "volatility" / "2024"
-OUTPUT_PATH = PROJECT_ROOT / "data" / "processed" / "aggregated" / "2024"
+print("Reading volatility data from:",INPUT_PATH)
+df=spark.read.parquet(INPUT_PATH)
+print("Input records:",df.count())
 
-print("Reading volatility data from:")
-print(INPUT_PATH)
-
-df = spark.read.parquet(str(INPUT_PATH))
-
-print("\nInput records:", df.count())
-
-aggregated = df.groupBy("STATION", "NAME", "LATITUDE", "LONGITUDE").agg(
+aggregated=df.groupBy(
+    "STATION","NAME","LATITUDE","LONGITUDE"
+).agg(
     count("*").alias("TOTAL_DAYS"),
-    sum(when(col("HIGH_VOLATILITY") == 1, 1).otherwise(0)).alias("HIGH_VOLATILITY_DAYS"),
+    sum(when(col("HIGH_VOLATILITY")==1,1).otherwise(0)).alias("HIGH_VOLATILITY_DAYS"),
     avg("HIGH_VOLATILITY").alias("HIGH_VOLATILITY_RATE"),
     avg("CLIMATE_VOLATILITY_SCORE").alias("AVG_VOLATILITY_SCORE"),
     max("CLIMATE_VOLATILITY_SCORE").alias("MAX_VOLATILITY_SCORE"),
@@ -34,16 +42,11 @@ aggregated = df.groupBy("STATION", "NAME", "LATITUDE", "LONGITUDE").agg(
     avg("WIND_VOLATILITY_Z").alias("AVG_WIND_VOLATILITY")
 )
 
-print("\nAggregated records:", aggregated.count())
+print("Aggregated records:",aggregated.count())
+aggregated.show(10,truncate=False)
 
-aggregated.show(10, truncate=False)
-
-OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-print("\nWriting aggregated dataset to:")
-print(OUTPUT_PATH)
-
-aggregated.write.mode("overwrite").parquet(str(OUTPUT_PATH))
+print("Writing aggregated dataset to:",OUTPUT_PATH)
+aggregated.write.mode("overwrite").parquet(OUTPUT_PATH)
 
 print("SUCCESS: Aggregated volatility dataset created.")
 
