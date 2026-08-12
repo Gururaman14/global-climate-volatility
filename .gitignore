@@ -224,3 +224,6 @@ logs/
 *.jar
 *.backup
 .vscode/
+
+*.jar
+*.backup
