@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local data and runtime state
+minio-data/
+data/
+logs/
+*.jar
+*.backup
+.vscode/
