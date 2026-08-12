@@ -67,7 +67,7 @@ The Power BI dashboard provides:
 
 Dashboard file:
 
-'dashboard/Global Climate Volatility Dashboard.pbix'
+`dashboard/Global Climate Volatility Dashboard.pbix`
 
 ## Technologies
 
@@ -83,7 +83,7 @@ Dashboard file:
 
 ## Project Structure
 
-'''text
+```text
 global-climate-volatility/
 ├── dashboard/
 ├── data/
@@ -98,3 +98,4 @@ global-climate-volatility/
 ├── run_pipeline.sh
 ├── README.md
 └── readme.txt
+```
