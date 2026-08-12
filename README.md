@@ -4,48 +4,62 @@ Distributed climate data engineering pipeline using Apache Spark, MinIO, Postgre
 
 ## Overview
 
-This project processes climate observations to identify and analyse climate volatility across weather stations. The pipeline performs data cleaning, feature engineering, volatility scoring, aggregation, statistical analysis, and dashboard reporting.
+This project processes 2024 NOAA GSOD observations from weather stations and develops a statistical weather-variability framework using Spark. The pipeline performs data cleaning, feature engineering, station-level standardisation, volatility scoring, aggregation, statistical analysis, PostgreSQL loading, and Power BI reporting.
 
 ## Architecture
 
 NOAA GSOD
+→ Station Selection
+→ Local Raw Data
+→ MinIO
 → Spark Cleaning
 → Feature Engineering
-→ Climate Volatility
-→ Station/Monthly Aggregation
-→ MinIO / Parquet
+→ Volatility Scoring
+→ Station Aggregation
+→ Monthly Aggregation
 → PostgreSQL
+→ Analysis
 → Power BI
 
 ## Pipeline
 
-1. Clean GSOD climate data using PySpark.
-2. Generate temperature, precipitation, and wind volatility features.
-3. Calculate a climate volatility score and high-volatility classification.
-4. Aggregate results by station and month.
-5. Store processed datasets as Parquet in MinIO.
-6. Load monthly results into PostgreSQL.
-7. Perform volatility, driver, and correlation analysis.
-8. Visualise results using Power BI.
+1. Select active NOAA weather stations.
+2. Download 2024 GSOD station data.
+3. Upload raw observations to MinIO.
+4. Clean GSOD sentinel values using PySpark.
+5. Generate temporal, anomaly, and rolling-volatility features.
+6. Calculate station-level climate-volatility scores.
+7. Aggregate daily results by station.
+8. Aggregate results by station and month.
+9. Load monthly results into PostgreSQL.
+10. Perform volatility, correlation, and component analysis.
+11. Analyse the results using Jupyter.
+12. Visualise the results using Power BI.
 
-## Results
+## Final Results
 
-- 26,545 daily volatility records processed.
+- 26,545 daily observations processed.
+- 79 weather stations analysed.
 - 941 station-month records generated.
-- 856 station-month records contained valid high-volatility rates.
-- 979 high-volatility days identified.
-- Temperature volatility correlation with the climate volatility score: 0.5692.
-- Precipitation volatility correlation: 0.5216.
-- Temperature anomaly correlation: 0.3387.
-- Wind volatility correlation: 0.2502.
+- 903 station-month records met the minimum 20-day observation threshold.
+- 1,537 high-volatility days identified.
+- January recorded the highest average high-volatility rate in the qualified 2024 analysis.
+- Correlation analysis includes leave-one-component-out testing to reduce part-whole bias when assessing relationships between volatility components and the composite score.
 
-January and December showed the highest overall high-volatility rates in the 2024 analysis.
+## Corrected Leave-One-Component-Out Correlations
+
+- Temperature anomaly: 0.0261
+- Temperature volatility: 0.1466
+- Precipitation volatility: -0.0538
+- Wind volatility: -0.2666
+
+These values are used for interpretation instead of treating component-to-composite correlations as independent driver evidence.
 
 ## Dashboard
 
 The Power BI dashboard provides:
 
-- Climate volatility KPIs.
+- Climate-volatility KPIs.
 - Monthly volatility trends.
 - Top high-volatility stations.
 - Geographic station distribution.
@@ -64,16 +78,23 @@ Dashboard file:
 - Docker
 - Parquet
 - Power BI
+- Jupyter
 - Git
 
-## Running the Pipeline
+## Project Structure
 
-Make sure the required services are running and the Python environment is activated.
-
-bash
-chmod +x run_pipeline.sh
-./run_pipeline.sh
-
-exit
-
-
+'''text
+global-climate-volatility/
+├── dashboard/
+├── data/
+│   └── metadata/
+├── docs/
+├── ingestion/
+├── notebooks/
+├── spark/
+├── config.py
+├── docker-compose.yml
+├── requirements.txt
+├── run_pipeline.sh
+├── README.md
+└── readme.txt
