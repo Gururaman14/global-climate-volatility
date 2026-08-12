@@ -53,7 +53,7 @@ The Power BI dashboard provides:
 
 Dashboard file:
 
-`dashboard/Global Climate Volatility Dashboard.pbix`
+'dashboard/Global Climate Volatility Dashboard.pbix'
 
 ## Technologies
 
@@ -70,13 +70,9 @@ Dashboard file:
 
 Make sure the required services are running and the Python environment is activated.
 
-```bash
+bash
 chmod +x run_pipeline.sh
 ./run_pipeline.sh
-
-c
-C
-Q
 
 exit
 
