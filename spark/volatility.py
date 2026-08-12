@@ -113,5 +113,5 @@ out.write.mode("overwrite").parquet(
     f"s3a://{MINIO_BUCKET}/processed/volatility/{YEAR}/"
 )
 
-print("SUCCESS: Climate volatility dataset created.")
+print("SUCCESS: Weather variability dataset created.")
 spark.stop()

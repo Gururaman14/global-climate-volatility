@@ -63,4 +63,4 @@ df.orderBy(desc("AVG_VOLATILITY_SCORE")).select(
 ).show(10, truncate=False)
 
 spark.stop()
-print("SUCCESS: Climate volatility analysis completed.")
+print("SUCCESS: Weather variability analysis completed.")

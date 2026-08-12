@@ -5,3 +5,4 @@ tqdm
 boto3
 psycopg2-binary
 matplotlib
+scipy
