@@ -1,72 +1,117 @@
-import os,sys
+import os
+import sys
 from pathlib import Path
+
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col,abs,avg,stddev,coalesce
+from pyspark.sql.functions import abs, avg, col, lit, stddev, when, coalesce
 
-PROJECT_ROOT=Path(__file__).resolve().parent.parent
-sys.path.insert(0,str(PROJECT_ROOT))
-os.environ["SPARK_LOCAL_IP"]="127.0.0.1"
-os.environ["SPARK_LOCAL_HOSTNAME"]="localhost"
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-INPUT_PATH="s3a://climate-data/processed/features/2024/"
-OUTPUT_PATH="s3a://climate-data/processed/volatility/2024/"
+from config import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET, YEAR
 
-spark=(SparkSession.builder.appName("GlobalClimateVolatility-Scoring").master("local[2]")
-.config("spark.driver.host","127.0.0.1")
-.config("spark.driver.bindAddress","127.0.0.1")
-.config("spark.hadoop.fs.s3a.endpoint","http://127.0.0.1:9000")
-.config("spark.hadoop.fs.s3a.access.key","minioadmin")
-.config("spark.hadoop.fs.s3a.secret.key","minioadmin")
-.config("spark.hadoop.fs.s3a.path.style.access","true")
-.config("spark.hadoop.fs.s3a.connection.ssl.enabled","false")
-.config("spark.hadoop.fs.s3a.impl","org.apache.hadoop.fs.s3a.S3AFileSystem")
-.getOrCreate())
-spark.sparkContext.setLogLevel("WARN")
+os.environ["SPARK_LOCAL_IP"] = "127.0.0.1"
 
-print("Reading feature data from:",INPUT_PATH)
-df=spark.read.parquet(INPUT_PATH)
-print("Input records:",df.count())
+spark = (
+    SparkSession.builder.appName("ClimateVolatility")
+    .master("local[2]")
+    .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT)
+    .config("spark.hadoop.fs.s3a.access.key", MINIO_ACCESS_KEY)
+    .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET_KEY)
+    .config("spark.hadoop.fs.s3a.path.style.access", "true")
+    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
+    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+    .getOrCreate()
+)
 
-stats=df.select(
-    avg("TEMP_ANOMALY").alias("TEMP_ANOMALY_MEAN"),
-    stddev("TEMP_ANOMALY").alias("TEMP_ANOMALY_STD"),
-    avg("TEMP_7D_STD").alias("TEMP_7D_STD_MEAN"),
-    stddev("TEMP_7D_STD").alias("TEMP_7D_STD_STD"),
-    avg("PRCP_7D_STD").alias("PRCP_7D_STD_MEAN"),
-    stddev("PRCP_7D_STD").alias("PRCP_7D_STD_STD"),
-    avg("WDSP_7D_STD").alias("WDSP_7D_STD_MEAN"),
-    stddev("WDSP_7D_STD").alias("WDSP_7D_STD_STD")
-).collect()[0]
+df = spark.read.parquet(f"s3a://{MINIO_BUCKET}/processed/features/{YEAR}/")
+print("Input records:", df.count())
 
-features=(df
-.withColumn("TEMP_ANOMALY_ABS",abs(col("TEMP_ANOMALY")))
-.withColumn("TEMP_ANOMALY_Z",(abs(col("TEMP_ANOMALY"))-stats["TEMP_ANOMALY_MEAN"])/stats["TEMP_ANOMALY_STD"])
-.withColumn("TEMP_VOLATILITY_Z",(col("TEMP_7D_STD")-stats["TEMP_7D_STD_MEAN"])/stats["TEMP_7D_STD_STD"])
-.withColumn("PRCP_VOLATILITY_Z",(col("PRCP_7D_STD")-stats["PRCP_7D_STD_MEAN"])/stats["PRCP_7D_STD_STD"])
-.withColumn("WIND_VOLATILITY_Z",(col("WDSP_7D_STD")-stats["WDSP_7D_STD_MEAN"])/stats["WDSP_7D_STD_STD"]))
+# Global statistics
+g = df.select(
+    avg(abs(col("TEMP_ANOMALY"))).alias("ta_m"),
+    stddev(abs(col("TEMP_ANOMALY"))).alias("ta_s"),
+    avg("TEMP_7D_STD").alias("tv_m"), stddev("TEMP_7D_STD").alias("tv_s"),
+    avg("PRCP_7D_STD").alias("pv_m"), stddev("PRCP_7D_STD").alias("pv_s"),
+    avg("WDSP_7D_STD").alias("wv_m"), stddev("WDSP_7D_STD").alias("wv_s")
+).first()
 
-features=features.withColumn(
-    "CLIMATE_VOLATILITY_SCORE",
-    (coalesce(col("TEMP_ANOMALY_Z"),col("TEMP_ANOMALY_Z")*0)
-    +coalesce(col("TEMP_VOLATILITY_Z"),col("TEMP_VOLATILITY_Z")*0)
-    +coalesce(col("PRCP_VOLATILITY_Z"),col("PRCP_VOLATILITY_Z")*0)
-    +coalesce(col("WIND_VOLATILITY_Z"),col("WIND_VOLATILITY_Z")*0))/4)
+# Global z-scores
+df = (
+    df
+    .withColumn("TEMP_ANOMALY_Z_GLOBAL",
+        when((col("TEMP_ANOMALY").isNotNull()) & (lit(g.ta_s) > 0),
+             (abs(col("TEMP_ANOMALY")) - g.ta_m) / g.ta_s))
+    .withColumn("TEMP_VOLATILITY_Z_GLOBAL",
+        when((col("TEMP_7D_STD").isNotNull()) & (lit(g.tv_s) > 0),
+             (col("TEMP_7D_STD") - g.tv_m) / g.tv_s))
+    .withColumn("PRCP_VOLATILITY_Z_GLOBAL",
+        when((col("PRCP_7D_STD").isNotNull()) & (lit(g.pv_s) > 0),
+             (col("PRCP_7D_STD") - g.pv_m) / g.pv_s))
+    .withColumn("WIND_VOLATILITY_Z_GLOBAL",
+        when((col("WDSP_7D_STD").isNotNull()) & (lit(g.wv_s) > 0),
+             (col("WDSP_7D_STD") - g.wv_m) / g.wv_s))
+)
 
-features=features.withColumn("HIGH_VOLATILITY",(col("CLIMATE_VOLATILITY_SCORE")>=1).cast("int"))
+# Station-level statistics
+w = "STATION"
+df = (
+    df
+    .withColumn("ta_m_s", avg(abs(col("TEMP_ANOMALY"))).over(__import__("pyspark").sql.Window.partitionBy(w)))
+    .withColumn("ta_s_s", stddev(abs(col("TEMP_ANOMALY"))).over(__import__("pyspark").sql.Window.partitionBy(w)))
+    .withColumn("tv_m_s", avg("TEMP_7D_STD").over(__import__("pyspark").sql.Window.partitionBy(w)))
+    .withColumn("tv_s_s", stddev("TEMP_7D_STD").over(__import__("pyspark").sql.Window.partitionBy(w)))
+    .withColumn("pv_m_s", avg("PRCP_7D_STD").over(__import__("pyspark").sql.Window.partitionBy(w)))
+    .withColumn("pv_s_s", stddev("PRCP_7D_STD").over(__import__("pyspark").sql.Window.partitionBy(w)))
+    .withColumn("wv_m_s", avg("WDSP_7D_STD").over(__import__("pyspark").sql.Window.partitionBy(w)))
+    .withColumn("wv_s_s", stddev("WDSP_7D_STD").over(__import__("pyspark").sql.Window.partitionBy(w)))
+)
 
-features=features.select(
-    "STATION","DATE","LATITUDE","LONGITUDE","ELEVATION","NAME",
-    "YEAR","MONTH","DAY","WEEK","TEMP","MAX","MIN","TEMP_RANGE",
-    "TEMP_MEAN","TEMP_ANOMALY","DEWP","SLP","VISIB","WDSP","MXSPD",
-    "GUST","PRCP","TEMP_7D_STD","PRCP_7D_STD","WDSP_7D_STD",
-    "TEMP_ANOMALY_ABS","TEMP_ANOMALY_Z","TEMP_VOLATILITY_Z",
-    "PRCP_VOLATILITY_Z","WIND_VOLATILITY_Z",
-    "CLIMATE_VOLATILITY_SCORE","HIGH_VOLATILITY")
+# Station-level z-scores
+df = (
+    df
+    .withColumn("TEMP_ANOMALY_Z_STATION",
+        when((col("TEMP_ANOMALY").isNotNull()) & (col("ta_s_s") > 0),
+             (abs(col("TEMP_ANOMALY")) - col("ta_m_s")) / col("ta_s_s")))
+    .withColumn("TEMP_VOLATILITY_Z_STATION",
+        when((col("TEMP_7D_STD").isNotNull()) & (col("tv_s_s") > 0),
+             (col("TEMP_7D_STD") - col("tv_m_s")) / col("tv_s_s")))
+    .withColumn("PRCP_VOLATILITY_Z_STATION",
+        when((col("PRCP_7D_STD").isNotNull()) & (col("pv_s_s") > 0),
+             (col("PRCP_7D_STD") - col("pv_m_s")) / col("pv_s_s")))
+    .withColumn("WIND_VOLATILITY_Z_STATION",
+        when((col("WDSP_7D_STD").isNotNull()) & (col("wv_s_s") > 0),
+             (col("WDSP_7D_STD") - col("wv_m_s")) / col("wv_s_s")))
+)
 
-print("Volatility records:",features.count())
-features.select("STATION","DATE","TEMP_ANOMALY","TEMP_7D_STD","PRCP_7D_STD","WDSP_7D_STD","CLIMATE_VOLATILITY_SCORE","HIGH_VOLATILITY").show(10,truncate=False)
+# Final station-level score: average only available components
+parts = [
+    col("TEMP_ANOMALY_Z_STATION"),
+    col("TEMP_VOLATILITY_Z_STATION"),
+    col("PRCP_VOLATILITY_Z_STATION"),
+    col("WIND_VOLATILITY_Z_STATION")
+]
 
-print("Writing volatility dataset to:",OUTPUT_PATH)
-features.write.mode("overwrite").parquet(OUTPUT_PATH)
+score_sum = sum(coalesce(x, lit(0.0)) for x in parts)
+score_n = sum(when(x.isNotNull(), 1).otherwise(0) for x in parts)
+
+df = (
+    df
+    .withColumn("CLIMATE_VOLATILITY_SCORE",
+        when(score_n > 0, score_sum / score_n))
+    .withColumn("HIGH_VOLATILITY",
+        when(col("CLIMATE_VOLATILITY_SCORE") >= 1.0, 1).otherwise(0))
+)
+
+out = df
+
+print("Volatility records:", out.count())
+print("Null scores:", out.filter(col("CLIMATE_VOLATILITY_SCORE").isNull()).count())
+print("High-volatility days:", out.filter(col("HIGH_VOLATILITY") == 1).count())
+
+out.write.mode("overwrite").parquet(
+    f"s3a://{MINIO_BUCKET}/processed/volatility/{YEAR}/"
+)
+
 print("SUCCESS: Climate volatility dataset created.")
 spark.stop()

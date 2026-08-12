@@ -1,41 +1,70 @@
+import os
+import sys
+from pathlib import Path
+
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import desc,avg
+from pyspark.sql.functions import avg, col, desc
 
-INPUT_PATH="s3a://climate-data/processed/monthly/2024/"
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-spark=(SparkSession.builder.appName("GlobalClimateVolatility-DriverAnalysis").master("local[2]")
-.config("spark.driver.host","127.0.0.1")
-.config("spark.driver.bindAddress","127.0.0.1")
-.config("spark.hadoop.fs.s3a.endpoint","http://127.0.0.1:9000")
-.config("spark.hadoop.fs.s3a.access.key","minioadmin")
-.config("spark.hadoop.fs.s3a.secret.key","minioadmin")
-.config("spark.hadoop.fs.s3a.path.style.access","true")
-.config("spark.hadoop.fs.s3a.connection.ssl.enabled","false")
-.config("spark.hadoop.fs.s3a.impl","org.apache.hadoop.fs.s3a.S3AFileSystem")
-.getOrCreate())
+from config import (MINIO_ENDPOINT,MINIO_ACCESS_KEY,MINIO_SECRET_KEY,MINIO_BUCKET,YEAR,MIN_DAYS,)
 
-spark.sparkContext.setLogLevel("WARN")
-print("Reading monthly data from:",INPUT_PATH)
-df=spark.read.parquet(INPUT_PATH)
-print("Monthly records:",df.count())
+os.environ["SPARK_LOCAL_IP"] = "127.0.0.1"
 
-print("\nVolatility drivers for highest-risk months:")
-df.select("STATION","NAME","YEAR","MONTH","AVG_VOLATILITY_SCORE","AVG_TEMP_VOLATILITY","AVG_PRCP_VOLATILITY","AVG_WIND_VOLATILITY","HIGH_VOLATILITY_RATE").orderBy(desc("AVG_VOLATILITY_SCORE")).show(10,truncate=False)
+spark = (
+    SparkSession.builder
+    .appName("ClimateDriverAnalysis")
+    .master("local[2]")
+    .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT)
+    .config("spark.hadoop.fs.s3a.access.key", MINIO_ACCESS_KEY)
+    .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET_KEY)
+    .config("spark.hadoop.fs.s3a.path.style.access", "true")
+    .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
+    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+    .getOrCreate()
+)
 
-print("\nAverage volatility drivers by month:")
-df.groupBy("MONTH").agg(avg("AVG_VOLATILITY_SCORE").alias("AVG_VOLATILITY_SCORE"),avg("AVG_TEMP_VOLATILITY").alias("AVG_TEMP_VOLATILITY"),avg("AVG_PRCP_VOLATILITY").alias("AVG_PRCP_VOLATILITY"),avg("AVG_WIND_VOLATILITY").alias("AVG_WIND_VOLATILITY")).orderBy(desc("AVG_VOLATILITY_SCORE")).show(12,truncate=False)
+df = spark.read.parquet(
+    f"s3a://{MINIO_BUCKET}/processed/monthly/{YEAR}/"
+)
 
-print("\nAverage volatility drivers by station:")
-df.groupBy("STATION","NAME").agg(avg("AVG_VOLATILITY_SCORE").alias("AVG_VOLATILITY_SCORE"),avg("AVG_TEMP_VOLATILITY").alias("AVG_TEMP_VOLATILITY"),avg("AVG_PRCP_VOLATILITY").alias("AVG_PRCP_VOLATILITY"),avg("AVG_WIND_VOLATILITY").alias("AVG_WIND_VOLATILITY")).orderBy(desc("AVG_VOLATILITY_SCORE")).show(10,truncate=False)
+print("Monthly records:", df.count())
 
-print("\nHighest temperature volatility:")
-df.orderBy(desc("AVG_TEMP_VOLATILITY")).select("STATION","NAME","YEAR","MONTH","AVG_TEMP_VOLATILITY","AVG_VOLATILITY_SCORE").show(10,truncate=False)
+df = df.filter(col("TOTAL_DAYS") >= MIN_DAYS)
 
-print("\nHighest precipitation volatility:")
-df.orderBy(desc("AVG_PRCP_VOLATILITY")).select("STATION","NAME","YEAR","MONTH","AVG_PRCP_VOLATILITY","AVG_VOLATILITY_SCORE").show(10,truncate=False)
+print("Records after minimum-days filter:", df.count())
 
-print("\nHighest wind volatility:")
-df.orderBy(desc("AVG_WIND_VOLATILITY")).select("STATION","NAME","YEAR","MONTH","AVG_WIND_VOLATILITY","AVG_VOLATILITY_SCORE").show(10,truncate=False)
+print("\nHighest-risk station-months:")
+df.orderBy(desc("AVG_VOLATILITY_SCORE")).select(
+    "STATION",
+    "NAME",
+    "YEAR",
+    "MONTH",
+    "TOTAL_DAYS",
+    "AVG_VOLATILITY_SCORE",
+    "AVG_TEMP_VOLATILITY",
+    "AVG_PRCP_VOLATILITY",
+    "AVG_WIND_VOLATILITY",
+    "HIGH_VOLATILITY_RATE"
+).show(10, truncate=False)
+
+print("\nAverage components by month:")
+df.groupBy("MONTH").agg(
+    avg("AVG_TEMP_VOLATILITY").alias("AVG_TEMP_VOLATILITY"),
+    avg("AVG_PRCP_VOLATILITY").alias("AVG_PRCP_VOLATILITY"),
+    avg("AVG_WIND_VOLATILITY").alias("AVG_WIND_VOLATILITY"),
+    avg("AVG_VOLATILITY_SCORE").alias("AVG_VOLATILITY_SCORE")
+).orderBy("MONTH").show(12, truncate=False)
+
+print("\nAverage components by station:")
+df.groupBy("STATION", "NAME").agg(
+    avg("AVG_TEMP_VOLATILITY").alias("AVG_TEMP_VOLATILITY"),
+    avg("AVG_PRCP_VOLATILITY").alias("AVG_PRCP_VOLATILITY"),
+    avg("AVG_WIND_VOLATILITY").alias("AVG_WIND_VOLATILITY"),
+    avg("AVG_VOLATILITY_SCORE").alias("AVG_VOLATILITY_SCORE")
+).orderBy(desc("AVG_VOLATILITY_SCORE")).show(10, truncate=False)
 
 spark.stop()
-print("SUCCESS: Volatility driver analysis completed.")
+
+print("SUCCESS: Component analysis completed.")
